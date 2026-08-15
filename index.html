@@ -174,6 +174,13 @@
       <section class="secao ativa" id="secao-dashboard">
         <div class="cards" id="cards-resumo"><div class="vazio">Carregando...</div></div>
         <div class="painel">
+          <h2>Estoque por apostila</h2>
+          <div class="tabela-wrap"><table id="tabela-estoque-produto-painel">
+            <thead><tr><th>Apostila</th><th>Estoque atual</th></tr></thead>
+            <tbody><tr><td class="vazio" colspan="2">Carregando...</td></tr></tbody>
+          </table></div>
+        </div>
+        <div class="painel">
           <h2>Últimas vendas</h2>
           <div class="tabela-wrap"><table id="tabela-ultimas-vendas"><tbody><tr><td class="vazio">Carregando...</td></tr></tbody></table></div>
         </div>
@@ -248,25 +255,27 @@
 
       <!-- ---------- ESTOQUE ---------- -->
       <section class="secao" id="secao-estoque">
-        <div class="cards"><div class="card-stat azul"><div class="label">Estoque atual</div><div class="valor" id="estoque-saldo-grande">-</div></div></div>
+        <div class="cards" id="cards-estoque-produto"><div class="vazio">Carregando...</div></div>
         <div class="painel">
-          <h2>Registrar movimentação de estoque</h2>
-          <p style="font-size:12.5px;color:var(--cinza);margin-top:-8px;">Use "Entrada" quando comprar/receber mais apostilas do Ricardo. As saídas por venda são lançadas automaticamente.</p>
+          <h2 id="estoque-form-titulo">Registrar movimentação de estoque</h2>
+          <p style="font-size:12.5px;color:var(--cinza);margin-top:-8px;">Use "Entrada" quando comprar/receber mais apostilas do Ricardo. As saídas por venda são lançadas automaticamente. O estoque é controlado separadamente para cada apostila.</p>
           <div id="msg-estoque" class="msg"></div>
           <div class="grid-form">
+            <div class="campo"><label>Apostila</label><select id="e-produto"></select></div>
             <div class="campo"><label>Tipo</label>
               <select id="e-tipo"><option value="Entrada">Entrada</option><option value="Saida">Saída (ajuste manual)</option></select>
             </div>
             <div class="campo"><label>Quantidade</label><input id="e-quantidade" type="number" min="1" value="1"></div>
             <div class="campo full"><label>Motivo</label><input id="e-motivo" placeholder="Ex: Compra de novas apostilas com Ricardo Camara"></div>
           </div>
-          <button class="primario" onclick="registrarEstoqueForm()">Registrar</button>
+          <button class="primario" id="btn-estoque" onclick="registrarEstoqueForm()">Registrar</button>
+          <button class="pequeno" style="background:var(--cinza-claro); margin-left:8px; display:none;" id="btn-cancelar-edicao-estoque" onclick="cancelarEdicaoEstoque()">Cancelar edição</button>
         </div>
         <div class="painel">
           <h2>Histórico de movimentações</h2>
           <div class="tabela-wrap"><table id="tabela-estoque">
-            <thead><tr><th>Data</th><th>Tipo</th><th>Qtd</th><th>Motivo</th><th>Saldo após</th><th>Registrado por</th></tr></thead>
-            <tbody><tr><td class="vazio" colspan="6">Carregando...</td></tr></tbody>
+            <thead><tr><th>Data</th><th>Apostila</th><th>Tipo</th><th>Qtd</th><th>Motivo</th><th>Saldo após</th><th>Registrado por</th><th>Ações</th></tr></thead>
+            <tbody><tr><td class="vazio" colspan="8">Carregando...</td></tr></tbody>
           </table></div>
         </div>
       </section>
@@ -307,7 +316,8 @@
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     var USUARIO_NOME = null; // "FC Consultoria" ou "Ricardo Camara" (nome de exibição)
-    var DADOS = { resumo: {}, produtos: [], vendas: [], estoque: [], acertos: [] };
+    var DADOS = { resumo: {}, produtos: [], vendas: [], estoque: [], acertos: [], estoquePorProduto: [] };
+    var ESTOQUE_EDITANDO_ID = null;
 
     function mapaSenhaParaEmail(senha) {
       var s = (senha || '').trim().toLowerCase();
@@ -390,18 +400,20 @@
     // ============ CARREGAR DADOS ============
     async function carregarTudo() {
       try {
-        const [resumoRes, produtosRes, vendasRes, estoqueRes, acertosRes] = await Promise.all([
+        const [resumoRes, produtosRes, vendasRes, estoqueRes, acertosRes, estoqueProdutoRes] = await Promise.all([
           sb.rpc('get_resumo'),
           sb.from('produtos').select('*').order('id', { ascending: true }),
           sb.from('vendas').select('*').order('id', { ascending: false }),
           sb.from('estoque').select('*').order('id', { ascending: false }),
-          sb.from('acertos').select('*').order('id', { ascending: false })
+          sb.from('acertos').select('*').order('id', { ascending: false }),
+          sb.rpc('get_estoque_por_produto')
         ]);
         if (resumoRes.error) throw resumoRes.error;
         if (produtosRes.error) throw produtosRes.error;
         if (vendasRes.error) throw vendasRes.error;
         if (estoqueRes.error) throw estoqueRes.error;
         if (acertosRes.error) throw acertosRes.error;
+        if (estoqueProdutoRes.error) throw estoqueProdutoRes.error;
 
         var r = (resumoRes.data && resumoRes.data[0]) || {};
         DADOS = {
@@ -425,10 +437,16 @@
             };
           }),
           estoque: (estoqueRes.data || []).map(function (m) {
-            return { Data: m.criado_em, Tipo: m.tipo, Quantidade: m.quantidade, Motivo: m.motivo, SaldoApos: m.saldo_apos, RegistradoPor: m.registrado_por };
+            return {
+              ID: m.id, Data: m.criado_em, Tipo: m.tipo, ProdutoID: m.produto_id, VendaID: m.venda_id,
+              Quantidade: m.quantidade, Motivo: m.motivo, SaldoApos: m.saldo_apos, RegistradoPor: m.registrado_por
+            };
           }),
           acertos: (acertosRes.data || []).map(function (a) {
             return { Data: a.criado_em, ValorTotal: a.valor_total, QtdVendas: a.qtd_vendas, Observacao: a.observacao, RegistradoPor: a.registrado_por };
+          }),
+          estoquePorProduto: (estoqueProdutoRes.data || []).map(function (e) {
+            return { ProdutoID: e.produto_id, ProdutoNome: e.produto_nome, Saldo: e.saldo };
           })
         };
         renderizarTudo();
@@ -439,12 +457,19 @@
 
     function renderizarTudo() {
       renderizarResumo();
+      renderizarEstoquePorProdutoPainel();
       renderizarProdutos();
       renderizarSelectProdutos();
       renderizarVendas();
       renderizarUltimasVendas();
+      renderizarSelectProdutoEstoque();
       renderizarEstoque();
       renderizarAcerto();
+    }
+
+    function saldoDoProduto(produtoId) {
+      var item = DADOS.estoquePorProduto.filter(function (e) { return String(e.ProdutoID) === String(produtoId); })[0];
+      return item ? item.Saldo : 0;
     }
 
     // ============ DASHBOARD ============
@@ -457,6 +482,14 @@
         '<div class="card-stat laranja"><div class="label">A receber de clientes</div><div class="valor">' + fmtMoeda(r.totalAReceber) + '</div></div>' +
         '<div class="card-stat vermelho"><div class="label">Custo pendente p/ Ricardo</div><div class="valor">' + fmtMoeda(r.custoPendenteRepasse) + '</div></div>' +
         '<div class="card-stat verde"><div class="label">Já repassado ao Ricardo</div><div class="valor">' + fmtMoeda(r.custoJaRepassado) + '</div></div>';
+    }
+
+    function renderizarEstoquePorProdutoPainel() {
+      var el = document.querySelector('#tabela-estoque-produto-painel tbody');
+      if (DADOS.estoquePorProduto.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="2">Cadastre um produto primeiro.</td></tr>'; return; }
+      el.innerHTML = DADOS.estoquePorProduto.map(function (e) {
+        return '<tr><td><b>' + e.ProdutoNome + '</b></td><td>' + e.Saldo + ' un.</td></tr>';
+      }).join('');
     }
 
     function renderizarUltimasVendas() {
@@ -511,7 +544,7 @@
       if (!opt) return;
       document.getElementById('v-valor-venda').value = opt.getAttribute('data-venda') || '';
       document.getElementById('v-valor-custo').value = opt.getAttribute('data-custo') || '';
-      document.getElementById('v-estoque-disp').innerText = DADOS.resumo.estoqueAtual + ' un.';
+      document.getElementById('v-estoque-disp').innerText = saldoDoProduto(opt.value) + ' un.';
       calcularTotaisVenda();
     }
 
@@ -582,30 +615,89 @@
     }
 
     // ============ ESTOQUE ============
+    function renderizarSelectProdutoEstoque() {
+      var sel = document.getElementById('e-produto');
+      var valorAtual = sel.value;
+      if (DADOS.produtos.length === 0) { sel.innerHTML = '<option value="">Cadastre um produto primeiro</option>'; return; }
+      sel.innerHTML = DADOS.produtos.map(function (p) {
+        return '<option value="' + p.ID + '">' + p.Nome + '</option>';
+      }).join('');
+      if (valorAtual) sel.value = valorAtual;
+    }
+
     async function registrarEstoqueForm() {
+      var produtoId = Number(document.getElementById('e-produto').value) || null;
+      if (!produtoId) { mostrarMsg('msg-estoque', 'erro', 'Selecione uma apostila.'); return; }
       var qtd = Number(document.getElementById('e-quantidade').value) || 0;
       if (qtd <= 0) { mostrarMsg('msg-estoque', 'erro', 'Informe uma quantidade válida.'); return; }
-      const { error } = await sb.rpc('registrar_estoque_manual', {
-        p_tipo: document.getElementById('e-tipo').value,
-        p_quantidade: qtd,
-        p_motivo: document.getElementById('e-motivo').value.trim(),
-        p_usuario: USUARIO_NOME
-      });
+      var tipo = document.getElementById('e-tipo').value;
+      var motivo = document.getElementById('e-motivo').value.trim();
+
+      var error;
+      if (ESTOQUE_EDITANDO_ID) {
+        ({ error } = await sb.rpc('editar_estoque_manual', {
+          p_id: ESTOQUE_EDITANDO_ID, p_tipo: tipo, p_produto_id: produtoId, p_quantidade: qtd, p_motivo: motivo
+        }));
+      } else {
+        ({ error } = await sb.rpc('registrar_estoque_manual', {
+          p_tipo: tipo, p_produto_id: produtoId, p_quantidade: qtd, p_motivo: motivo, p_usuario: USUARIO_NOME
+        }));
+      }
       if (error) { tratarErro('msg-estoque', error); return; }
-      mostrarMsg('msg-estoque', 'ok', 'Movimentação registrada!');
+      mostrarMsg('msg-estoque', 'ok', ESTOQUE_EDITANDO_ID ? 'Movimentação atualizada!' : 'Movimentação registrada!');
+      cancelarEdicaoEstoque();
+      carregarTudo();
+    }
+
+    function editarEstoque(id) {
+      var m = DADOS.estoque.filter(function (x) { return x.ID === id; })[0];
+      if (!m) return;
+      if (m.VendaID) { mostrarMsg('msg-estoque', 'erro', 'Não é possível editar uma saída gerada automaticamente por venda.'); return; }
+      ESTOQUE_EDITANDO_ID = id;
+      document.getElementById('e-produto').value = m.ProdutoID;
+      document.getElementById('e-tipo').value = m.Tipo;
+      document.getElementById('e-quantidade').value = m.Quantidade;
+      document.getElementById('e-motivo').value = m.Motivo || '';
+      document.getElementById('estoque-form-titulo').innerText = 'Editar movimentação de estoque';
+      document.getElementById('btn-estoque').innerText = 'Salvar edição';
+      document.getElementById('btn-cancelar-edicao-estoque').style.display = 'inline-block';
+      document.getElementById('secao-estoque').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelarEdicaoEstoque() {
+      ESTOQUE_EDITANDO_ID = null;
       document.getElementById('e-motivo').value = '';
       document.getElementById('e-quantidade').value = 1;
+      document.getElementById('e-tipo').value = 'Entrada';
+      document.getElementById('estoque-form-titulo').innerText = 'Registrar movimentação de estoque';
+      document.getElementById('btn-estoque').innerText = 'Registrar';
+      document.getElementById('btn-cancelar-edicao-estoque').style.display = 'none';
+    }
+
+    async function excluirEstoque(id) {
+      var m = DADOS.estoque.filter(function (x) { return x.ID === id; })[0];
+      if (!m) return;
+      if (m.VendaID) { mostrarMsg('msg-estoque', 'erro', 'Não é possível excluir uma saída gerada automaticamente por venda.'); return; }
+      if (!confirm('Excluir esta movimentação de estoque?')) return;
+      const { error } = await sb.rpc('excluir_estoque_manual', { p_id: id });
+      if (error) { tratarErro('msg-estoque', error); return; }
+      mostrarMsg('msg-estoque', 'ok', 'Movimentação excluída!');
       carregarTudo();
     }
 
     function renderizarEstoque() {
-      document.getElementById('estoque-saldo-grande').innerText = DADOS.resumo.estoqueAtual + ' un.';
       var el = document.querySelector('#tabela-estoque tbody');
-      if (DADOS.estoque.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="6">Nenhuma movimentação ainda.</td></tr>'; return; }
+      if (DADOS.estoque.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="8">Nenhuma movimentação ainda.</td></tr>'; return; }
       el.innerHTML = DADOS.estoque.map(function (m) {
         var tipoTxt = m.Tipo === 'Entrada' ? '<span class="badge verde">Entrada</span>' : '<span class="badge laranja">Saída</span>';
-        return '<tr><td>' + fmtData(m.Data) + '</td><td>' + tipoTxt + '</td><td>' + m.Quantidade + '</td>' +
-          '<td>' + (m.Motivo || '') + '</td><td>' + m.SaldoApos + '</td><td>' + (m.RegistradoPor || '') + '</td></tr>';
+        var produtoNome = DADOS.produtos.filter(function (p) { return p.ID === m.ProdutoID; })[0];
+        produtoNome = produtoNome ? produtoNome.Nome : (m.ProdutoID ? '(produto #' + m.ProdutoID + ')' : '<span style="color:var(--vermelho)">Sem apostila definida</span>');
+        var acoes = m.VendaID
+          ? '<span style="color:var(--cinza);font-size:12px;">venda #' + m.VendaID + '</span>'
+          : '<button class="pequeno" style="background:var(--cinza-claro);" onclick="editarEstoque(' + m.ID + ')">Editar</button> ' +
+            '<button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="excluirEstoque(' + m.ID + ')">Excluir</button>';
+        return '<tr><td>' + fmtData(m.Data) + '</td><td>' + produtoNome + '</td><td>' + tipoTxt + '</td><td>' + m.Quantidade + '</td>' +
+          '<td>' + (m.Motivo || '') + '</td><td>' + m.SaldoApos + '</td><td>' + (m.RegistradoPor || '') + '</td><td>' + acoes + '</td></tr>';
       }).join('');
     }
 
