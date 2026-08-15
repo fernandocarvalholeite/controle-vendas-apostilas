@@ -163,6 +163,7 @@
     <nav class="tabs">
       <button class="ativo" data-tab="dashboard" onclick="mostrarAba('dashboard')">Painel</button>
       <button data-tab="produto" onclick="mostrarAba('produto')">Produto</button>
+      <button data-tab="orcamento" onclick="mostrarAba('orcamento')">Orçamentos</button>
       <button data-tab="nova-venda" onclick="mostrarAba('nova-venda')">Nova Venda</button>
       <button data-tab="vendas" onclick="mostrarAba('vendas')">Vendas</button>
       <button data-tab="estoque" onclick="mostrarAba('estoque')">Estoque</button>
@@ -211,6 +212,51 @@
         </div>
       </section>
 
+      <!-- ---------- ORÇAMENTOS ---------- -->
+      <section class="secao" id="secao-orcamento">
+        <div class="painel">
+          <h2>Novo orçamento</h2>
+          <p style="font-size:12.5px;color:var(--cinza);margin-top:-8px;">Monte o orçamento e envie para o cliente pelo WhatsApp. Quando ele fechar, é só converter o orçamento em pedido — o estoque só é baixado nesse momento.</p>
+          <div id="msg-orcamento" class="msg"></div>
+          <div class="grid-form">
+            <div class="campo"><label>Produto</label><select id="o-produto" onchange="preencherValoresOrcamento()"></select></div>
+            <div class="campo"><label>Quantidade</label><input id="o-quantidade" type="number" min="1" value="1" onchange="calcularTotalOrcamento()"></div>
+            <div class="campo"><label>Valor unitário (R$)</label><input id="o-valor-unit" type="number" step="0.01" onchange="calcularTotalOrcamento()"></div>
+            <div class="campo"><label>Nome do cliente</label><input id="o-cliente" placeholder="Nome completo"></div>
+            <div class="campo"><label>Contato do cliente (WhatsApp)</label><input id="o-contato" placeholder="Ex: (11) 91234-5678"></div>
+            <div class="campo full"><label>Observação (opcional)</label><input id="o-observacao" placeholder="Alguma observação sobre o orçamento"></div>
+          </div>
+          <p style="font-size:13px; color:var(--cinza); margin: 4px 0 16px;">Valor total do orçamento: <b id="o-total">R$ 0,00</b></p>
+          <button class="primario" onclick="salvarOrcamentoForm()">Salvar orçamento</button>
+        </div>
+
+        <div class="painel" id="painel-fechar-orcamento" style="display:none;">
+          <h2>Fechar orçamento → virar pedido</h2>
+          <p style="font-size:12.5px;color:var(--cinza);margin-top:-8px;">Escolha a forma de pagamento e o status de recebimento combinados com o cliente. O estoque será baixado agora.</p>
+          <div id="msg-fechar-orcamento" class="msg"></div>
+          <div class="grid-form">
+            <div class="campo"><label>Forma de pagamento</label>
+              <select id="fo-forma-pagamento">
+                <option>Link Cartão</option><option>Cartão de Crédito</option><option>PIX</option><option>Boleto</option>
+              </select>
+            </div>
+            <div class="campo"><label>Status do recebimento</label>
+              <select id="fo-status-recebimento"><option>Recebido</option><option>A Receber</option></select>
+            </div>
+          </div>
+          <button class="primario" onclick="confirmarFecharOrcamento()">Confirmar e criar pedido</button>
+          <button class="pequeno" style="background:var(--cinza-claro); margin-left:8px;" onclick="cancelarFecharOrcamentoUI()">Cancelar</button>
+        </div>
+
+        <div class="painel">
+          <h2>Orçamentos</h2>
+          <div class="tabela-wrap"><table id="tabela-orcamentos">
+            <thead><tr><th>Data</th><th>Cliente</th><th>Produto</th><th>Qtd</th><th>Total (R$)</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody><tr><td class="vazio" colspan="7">Carregando...</td></tr></tbody>
+          </table></div>
+        </div>
+      </section>
+
       <!-- ---------- NOVA VENDA ---------- -->
       <section class="secao" id="secao-nova-venda">
         <div class="painel">
@@ -248,8 +294,8 @@
           <h2>Todas as vendas</h2>
           <div id="msg-vendas" class="msg"></div>
           <div class="tabela-wrap"><table id="tabela-vendas">
-            <thead><tr><th>#</th><th>Data</th><th>Cliente</th><th>Produto</th><th>Qtd</th><th>Venda (R$)</th><th>Custo (R$)</th><th>Pagamento</th><th>Recebimento</th><th>Repasse Ricardo</th></tr></thead>
-            <tbody><tr><td class="vazio" colspan="10">Carregando...</td></tr></tbody>
+            <thead><tr><th>#</th><th>Data</th><th>Cliente</th><th>Produto</th><th>Qtd</th><th>Venda (R$)</th><th>Custo (R$)</th><th>Pagamento</th><th>Recebimento</th><th>Repasse Ricardo</th><th>Ações</th></tr></thead>
+            <tbody><tr><td class="vazio" colspan="11">Carregando...</td></tr></tbody>
           </table></div>
         </div>
       </section>
@@ -317,9 +363,10 @@
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     var USUARIO_NOME = null; // "FC Consultoria" ou "Ricardo Camara" (nome de exibição)
-    var DADOS = { resumo: {}, produtos: [], vendas: [], estoque: [], acertos: [], estoquePorProduto: [] };
+    var DADOS = { resumo: {}, produtos: [], vendas: [], estoque: [], acertos: [], estoquePorProduto: [], orcamentos: [] };
     var ESTOQUE_EDITANDO_ID = null;
     var PRODUTO_EDITANDO_ID = null;
+    var ORCAMENTO_FECHANDO_ID = null;
 
     function mapaSenhaParaEmail(senha) {
       var s = (senha || '').trim().toLowerCase();
@@ -402,13 +449,14 @@
     // ============ CARREGAR DADOS ============
     async function carregarTudo() {
       try {
-        const [resumoRes, produtosRes, vendasRes, estoqueRes, acertosRes, estoqueProdutoRes] = await Promise.all([
+        const [resumoRes, produtosRes, vendasRes, estoqueRes, acertosRes, estoqueProdutoRes, orcamentosRes] = await Promise.all([
           sb.rpc('get_resumo'),
           sb.from('produtos').select('*').order('id', { ascending: true }),
           sb.from('vendas').select('*').order('id', { ascending: false }),
           sb.from('estoque').select('*').order('id', { ascending: false }),
           sb.from('acertos').select('*').order('id', { ascending: false }),
-          sb.rpc('get_estoque_por_produto')
+          sb.rpc('get_estoque_por_produto'),
+          sb.from('orcamentos').select('*').order('id', { ascending: false })
         ]);
         if (resumoRes.error) throw resumoRes.error;
         if (produtosRes.error) throw produtosRes.error;
@@ -416,6 +464,7 @@
         if (estoqueRes.error) throw estoqueRes.error;
         if (acertosRes.error) throw acertosRes.error;
         if (estoqueProdutoRes.error) throw estoqueProdutoRes.error;
+        if (orcamentosRes.error) throw orcamentosRes.error;
 
         var r = (resumoRes.data && resumoRes.data[0]) || {};
         DADOS = {
@@ -435,7 +484,8 @@
               ID: v.id, Data: v.criado_em, ProdutoID: v.produto_id, ProdutoNome: v.produto_nome,
               Cliente: v.cliente, Contato: v.contato, Quantidade: v.quantidade,
               ValorVendaTotal: v.valor_venda_total, ValorCustoTotal: v.valor_custo_total,
-              FormaPagamento: v.forma_pagamento, StatusRecebimento: v.status_recebimento, StatusRepasse: v.status_repasse
+              FormaPagamento: v.forma_pagamento, StatusRecebimento: v.status_recebimento, StatusRepasse: v.status_repasse,
+              Cancelada: !!v.cancelada, OrcamentoID: v.orcamento_id
             };
           }),
           estoque: (estoqueRes.data || []).map(function (m) {
@@ -449,6 +499,14 @@
           }),
           estoquePorProduto: (estoqueProdutoRes.data || []).map(function (e) {
             return { ProdutoID: e.produto_id, ProdutoNome: e.produto_nome, Saldo: e.saldo };
+          }),
+          orcamentos: (orcamentosRes.data || []).map(function (o) {
+            return {
+              ID: o.id, Data: o.criado_em, ProdutoID: o.produto_id, ProdutoNome: o.produto_nome,
+              Cliente: o.cliente, Contato: o.contato, Quantidade: o.quantidade,
+              ValorUnit: o.valor_unit, ValorTotal: o.valor_total, Observacao: o.observacao,
+              Status: o.status, VendaID: o.venda_id
+            };
           })
         };
         renderizarTudo();
@@ -467,6 +525,41 @@
       renderizarSelectProdutoEstoque();
       renderizarEstoque();
       renderizarAcerto();
+      renderizarSelectProdutoOrcamento();
+      renderizarOrcamentos();
+    }
+
+    // ============ WHATSAPP ============
+    function linkWhatsApp(contato, texto) {
+      var digitos = (contato || '').replace(/\D/g, '');
+      var numero = '';
+      if (digitos.length === 12 || digitos.length === 13) {
+        numero = digitos; // já parece ter DDI
+      } else if (digitos.length === 10 || digitos.length === 11) {
+        numero = '55' + digitos; // DDD + número, sem DDI
+      }
+      return 'https://wa.me/' + numero + '?text=' + encodeURIComponent(texto);
+    }
+    function abrirWhatsApp(contato, texto) {
+      window.open(linkWhatsApp(contato, texto), '_blank');
+    }
+    function montarMensagemOrcamento(o) {
+      return 'Olá ' + o.Cliente + '! Segue o orçamento:\n\n' +
+        'Apostila: ' + o.ProdutoNome + '\n' +
+        'Quantidade: ' + o.Quantidade + '\n' +
+        'Valor unitário: ' + fmtMoeda(o.ValorUnit) + '\n' +
+        'Valor total: ' + fmtMoeda(o.ValorTotal) + '\n\n' +
+        'Formas de pagamento aceitas: Link Cartão, Cartão de Crédito, PIX ou Boleto.\n\n' +
+        'Qualquer dúvida, estou à disposição!';
+    }
+    function montarMensagemPedido(v) {
+      return 'Olá ' + v.Cliente + '! Segue a confirmação do seu pedido:\n\n' +
+        'Apostila: ' + v.ProdutoNome + '\n' +
+        'Quantidade: ' + v.Quantidade + '\n' +
+        'Valor total: ' + fmtMoeda(v.ValorVendaTotal) + '\n' +
+        'Forma de pagamento: ' + v.FormaPagamento + '\n' +
+        'Status: ' + (v.StatusRecebimento === 'Recebido' ? 'Pagamento recebido' : 'Aguardando pagamento') + '\n\n' +
+        'Obrigado pela compra!';
     }
 
     function saldoDoProduto(produtoId) {
@@ -500,7 +593,7 @@
       if (lista.length === 0) { el.innerHTML = '<tr><td class="vazio">Nenhuma venda registrada ainda.</td></tr>'; return; }
       el.innerHTML = lista.map(function (v) {
         return '<tr><td>' + fmtData(v.Data) + '</td><td>' + v.Cliente + '</td><td>' + v.ProdutoNome + '</td><td>' + fmtMoeda(v.ValorVendaTotal) + '</td>' +
-          '<td>' + badgeRecebimento(v.StatusRecebimento) + '</td></tr>';
+          '<td>' + (v.Cancelada ? '<span class="badge cinza">Cancelada</span>' : badgeRecebimento(v.StatusRecebimento)) + '</td></tr>';
       }).join('');
     }
 
@@ -618,6 +711,125 @@
       carregarTudo();
     }
 
+    // ============ ORÇAMENTOS ============
+    function renderizarSelectProdutoOrcamento() {
+      var sel = document.getElementById('o-produto');
+      if (DADOS.produtos.length === 0) { sel.innerHTML = '<option value="">Cadastre um produto primeiro</option>'; return; }
+      sel.innerHTML = DADOS.produtos.map(function (p) {
+        return '<option value="' + p.ID + '" data-venda="' + p.ValorVenda + '" data-nome="' + p.Nome + '">' + p.Nome + '</option>';
+      }).join('');
+      preencherValoresOrcamento();
+    }
+
+    function preencherValoresOrcamento() {
+      var sel = document.getElementById('o-produto');
+      var opt = sel.options[sel.selectedIndex];
+      if (!opt) return;
+      document.getElementById('o-valor-unit').value = opt.getAttribute('data-venda') || '';
+      calcularTotalOrcamento();
+    }
+
+    function calcularTotalOrcamento() {
+      var qtd = Number(document.getElementById('o-quantidade').value) || 0;
+      var valor = Number(document.getElementById('o-valor-unit').value) || 0;
+      document.getElementById('o-total').innerText = fmtMoeda(qtd * valor);
+    }
+
+    async function salvarOrcamentoForm() {
+      var sel = document.getElementById('o-produto');
+      var opt = sel.options[sel.selectedIndex];
+      if (!opt || !opt.value) { mostrarMsg('msg-orcamento', 'erro', 'Cadastre um produto antes de fazer um orçamento.'); return; }
+      var cliente = document.getElementById('o-cliente').value.trim();
+      if (!cliente) { mostrarMsg('msg-orcamento', 'erro', 'Informe o nome do cliente.'); return; }
+      var qtd = Number(document.getElementById('o-quantidade').value) || 1;
+      var valorUnit = Number(document.getElementById('o-valor-unit').value) || 0;
+
+      const { error } = await sb.from('orcamentos').insert({
+        produto_id: Number(opt.value),
+        produto_nome: opt.getAttribute('data-nome'),
+        cliente: cliente,
+        contato: document.getElementById('o-contato').value.trim(),
+        quantidade: qtd,
+        valor_unit: valorUnit,
+        valor_total: qtd * valorUnit,
+        observacao: document.getElementById('o-observacao').value.trim(),
+        registrado_por: USUARIO_NOME
+      });
+      if (error) { tratarErro('msg-orcamento', error); return; }
+      mostrarMsg('msg-orcamento', 'ok', 'Orçamento salvo com sucesso!');
+      document.getElementById('o-cliente').value = '';
+      document.getElementById('o-contato').value = '';
+      document.getElementById('o-observacao').value = '';
+      document.getElementById('o-quantidade').value = 1;
+      carregarTudo();
+    }
+
+    function badgeOrcamento(status) {
+      if (status === 'Fechado') return '<span class="badge azul">Fechado</span>';
+      if (status === 'Cancelado') return '<span class="badge cinza">Cancelado</span>';
+      return '<span class="badge laranja">Aberto</span>';
+    }
+
+    function renderizarOrcamentos() {
+      var el = document.querySelector('#tabela-orcamentos tbody');
+      if (DADOS.orcamentos.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="7">Nenhum orçamento registrado ainda.</td></tr>'; return; }
+      el.innerHTML = DADOS.orcamentos.map(function (o) {
+        var acoes = '';
+        if (o.Status === 'Aberto') {
+          acoes =
+            '<button class="pequeno" style="background:#dcfce7;color:#166534;" onclick="enviarOrcamentoWhatsApp(' + o.ID + ')">WhatsApp</button> ' +
+            '<button class="pequeno" style="background:#dbeafe;color:#1e40af;" onclick="abrirFecharOrcamento(' + o.ID + ')">Fechar → Pedido</button> ' +
+            '<button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="cancelarOrcamento(' + o.ID + ')">Cancelar</button>';
+        } else if (o.Status === 'Fechado') {
+          acoes = '<span style="color:var(--cinza);font-size:12px;">Pedido #' + o.VendaID + '</span>';
+        } else {
+          acoes = '<span style="color:var(--cinza);font-size:12px;">-</span>';
+        }
+        return '<tr><td>' + fmtData(o.Data) + '</td><td>' + o.Cliente + '</td><td>' + o.ProdutoNome + '</td>' +
+          '<td>' + o.Quantidade + '</td><td>' + fmtMoeda(o.ValorTotal) + '</td><td>' + badgeOrcamento(o.Status) + '</td>' +
+          '<td>' + acoes + '</td></tr>';
+      }).join('');
+    }
+
+    function enviarOrcamentoWhatsApp(id) {
+      var o = DADOS.orcamentos.filter(function (x) { return x.ID === id; })[0];
+      if (!o) return;
+      abrirWhatsApp(o.Contato, montarMensagemOrcamento(o));
+    }
+
+    function abrirFecharOrcamento(id) {
+      ORCAMENTO_FECHANDO_ID = id;
+      document.getElementById('painel-fechar-orcamento').style.display = 'block';
+      document.getElementById('painel-fechar-orcamento').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelarFecharOrcamentoUI() {
+      ORCAMENTO_FECHANDO_ID = null;
+      document.getElementById('painel-fechar-orcamento').style.display = 'none';
+    }
+
+    async function confirmarFecharOrcamento() {
+      if (!ORCAMENTO_FECHANDO_ID) return;
+      const { error } = await sb.rpc('fechar_orcamento', {
+        p_orcamento_id: ORCAMENTO_FECHANDO_ID,
+        p_forma_pagamento: document.getElementById('fo-forma-pagamento').value,
+        p_status_recebimento: document.getElementById('fo-status-recebimento').value,
+        p_usuario: USUARIO_NOME
+      });
+      if (error) { tratarErro('msg-fechar-orcamento', error); return; }
+      mostrarMsg('msg-orcamento', 'ok', 'Orçamento fechado — pedido criado com sucesso!');
+      cancelarFecharOrcamentoUI();
+      carregarTudo();
+    }
+
+    async function cancelarOrcamento(id) {
+      if (!confirm('Cancelar este orçamento?')) return;
+      const { error } = await sb.rpc('cancelar_orcamento', { p_orcamento_id: id });
+      if (error) { tratarErro('msg-orcamento', error); return; }
+      mostrarMsg('msg-orcamento', 'ok', 'Orçamento cancelado.');
+      carregarTudo();
+    }
+
     // ============ LISTA DE VENDAS ============
     function badgeRecebimento(status) {
       if (status === 'Recebido') return '<span class="badge verde">Recebido</span>';
@@ -630,20 +842,40 @@
 
     function renderizarVendas() {
       var el = document.querySelector('#tabela-vendas tbody');
-      if (DADOS.vendas.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="10">Nenhuma venda registrada ainda.</td></tr>'; return; }
+      if (DADOS.vendas.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="11">Nenhuma venda registrada ainda.</td></tr>'; return; }
       el.innerHTML = DADOS.vendas.map(function (v) {
-        var botaoRecebido = v.StatusRecebimento === 'Recebido' ? '' : '<br><button class="pequeno verde" onclick="marcarRecebido(' + v.ID + ')">Marcar recebido</button>';
-        return '<tr>' +
+        var botaoRecebido = (v.StatusRecebimento === 'Recebido' || v.Cancelada) ? '' : '<br><button class="pequeno verde" onclick="marcarRecebido(' + v.ID + ')">Marcar recebido</button>';
+        var statusCel = v.Cancelada ? '<span class="badge cinza">Cancelada</span>' : badgeRecebimento(v.StatusRecebimento) + botaoRecebido;
+        var acoes = '<button class="pequeno" style="background:#dcfce7;color:#166534;" onclick="enviarPedidoWhatsApp(' + v.ID + ')">WhatsApp</button>';
+        if (!v.Cancelada) {
+          acoes += ' <button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="cancelarVenda(' + v.ID + ')">Cancelar</button>';
+        }
+        var linhaEstilo = v.Cancelada ? ' style="opacity:0.55;"' : '';
+        return '<tr' + linhaEstilo + '>' +
           '<td>' + v.ID + '</td>' + '<td>' + fmtData(v.Data) + '</td>' + '<td>' + v.Cliente + '</td>' + '<td>' + v.ProdutoNome + '</td>' +
           '<td>' + v.Quantidade + '</td>' + '<td>' + fmtMoeda(v.ValorVendaTotal) + '</td>' + '<td>' + fmtMoeda(v.ValorCustoTotal) + '</td>' +
-          '<td>' + v.FormaPagamento + '</td>' + '<td>' + badgeRecebimento(v.StatusRecebimento) + botaoRecebido + '</td>' +
-          '<td>' + badgeRepasse(v.StatusRepasse) + '</td></tr>';
+          '<td>' + v.FormaPagamento + '</td>' + '<td>' + statusCel + '</td>' +
+          '<td>' + badgeRepasse(v.StatusRepasse) + '</td>' + '<td>' + acoes + '</td></tr>';
       }).join('');
     }
 
     async function marcarRecebido(vendaId) {
       const { error } = await sb.rpc('marcar_recebido', { p_venda_id: vendaId });
       if (error) { tratarErro('msg-vendas', error); return; }
+      carregarTudo();
+    }
+
+    function enviarPedidoWhatsApp(vendaId) {
+      var v = DADOS.vendas.filter(function (x) { return x.ID === vendaId; })[0];
+      if (!v) return;
+      abrirWhatsApp(v.Contato, montarMensagemPedido(v));
+    }
+
+    async function cancelarVenda(vendaId) {
+      if (!confirm('Cancelar esta venda? A quantidade voltará para o estoque.')) return;
+      const { error } = await sb.rpc('cancelar_venda', { p_venda_id: vendaId, p_usuario: USUARIO_NOME });
+      if (error) { tratarErro('msg-vendas', error); return; }
+      mostrarMsg('msg-vendas', 'ok', 'Venda cancelada e estoque devolvido.');
       carregarTudo();
     }
 
@@ -739,7 +971,7 @@
       document.getElementById('acerto-pendente-grande').innerText = fmtMoeda(DADOS.resumo.custoPendenteRepasse);
       document.getElementById('acerto-pago-grande').innerText = fmtMoeda(DADOS.resumo.custoJaRepassado);
 
-      var pendentes = DADOS.vendas.filter(function (v) { return v.StatusRepasse === 'Pendente'; });
+      var pendentes = DADOS.vendas.filter(function (v) { return v.StatusRepasse === 'Pendente' && !v.Cancelada; });
       var el = document.querySelector('#tabela-pendentes-repasse tbody');
       if (pendentes.length === 0) {
         el.innerHTML = '<tr><td class="vazio" colspan="7">Nenhuma venda pendente de repasse. Tudo acertado com o Ricardo!</td></tr>';
