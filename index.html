@@ -189,7 +189,7 @@
       <!-- ---------- PRODUTO ---------- -->
       <section class="secao" id="secao-produto">
         <div class="painel">
-          <h2>Cadastrar apostila / produto</h2>
+          <h2 id="produto-form-titulo">Cadastrar apostila / produto</h2>
           <div id="msg-produto" class="msg"></div>
           <div class="grid-form">
             <div class="campo"><label>Nome do produto</label><input id="p-nome" placeholder="Ex: Apostila Curso XYZ"></div>
@@ -199,13 +199,14 @@
               <textarea id="p-descricao" placeholder="Descreva o conteúdo da apostila, público-alvo, número de páginas, temas abordados, etc. (até ~10 linhas)"></textarea>
             </div>
           </div>
-          <button class="primario" onclick="salvarProdutoForm()">Salvar produto</button>
+          <button class="primario" id="btn-produto" onclick="salvarProdutoForm()">Salvar produto</button>
+          <button class="pequeno" style="background:var(--cinza-claro); margin-left:8px; display:none;" id="btn-cancelar-edicao-produto" onclick="cancelarEdicaoProduto()">Cancelar edição</button>
         </div>
         <div class="painel">
           <h2>Produtos cadastrados</h2>
           <div class="tabela-wrap"><table id="tabela-produtos">
-            <thead><tr><th>Nome</th><th>Descrição</th><th>Custo (R$)</th><th>Venda (R$)</th></tr></thead>
-            <tbody><tr><td class="vazio" colspan="4">Carregando...</td></tr></tbody>
+            <thead><tr><th>Nome</th><th>Descrição</th><th>Custo (R$)</th><th>Venda (R$)</th><th>Ações</th></tr></thead>
+            <tbody><tr><td class="vazio" colspan="5">Carregando...</td></tr></tbody>
           </table></div>
         </div>
       </section>
@@ -318,6 +319,7 @@
     var USUARIO_NOME = null; // "FC Consultoria" ou "Ricardo Camara" (nome de exibição)
     var DADOS = { resumo: {}, produtos: [], vendas: [], estoque: [], acertos: [], estoquePorProduto: [] };
     var ESTOQUE_EDITANDO_ID = null;
+    var PRODUTO_EDITANDO_ID = null;
 
     function mapaSenhaParaEmail(senha) {
       var s = (senha || '').trim().toLowerCase();
@@ -509,22 +511,53 @@
       var venda = document.getElementById('p-venda').value;
       var descricao = document.getElementById('p-descricao').value.trim();
       if (!nome || !custo || !venda) { mostrarMsg('msg-produto', 'erro', 'Preencha nome, valor de custo e valor de venda.'); return; }
-      const { error } = await sb.from('produtos').insert({ nome: nome, descricao: descricao, valor_custo: Number(custo), valor_venda: Number(venda) });
+
+      var error;
+      if (PRODUTO_EDITANDO_ID) {
+        ({ error } = await sb.from('produtos').update({
+          nome: nome, descricao: descricao, valor_custo: Number(custo), valor_venda: Number(venda)
+        }).eq('id', PRODUTO_EDITANDO_ID));
+      } else {
+        ({ error } = await sb.from('produtos').insert({ nome: nome, descricao: descricao, valor_custo: Number(custo), valor_venda: Number(venda) }));
+      }
       if (error) { tratarErro('msg-produto', error); return; }
-      mostrarMsg('msg-produto', 'ok', 'Produto salvo com sucesso!');
+      mostrarMsg('msg-produto', 'ok', PRODUTO_EDITANDO_ID ? 'Produto atualizado com sucesso!' : 'Produto salvo com sucesso!');
+      cancelarEdicaoProduto();
+      carregarTudo();
+    }
+
+    function editarProduto(id) {
+      var p = DADOS.produtos.filter(function (x) { return x.ID === id; })[0];
+      if (!p) return;
+      PRODUTO_EDITANDO_ID = id;
+      document.getElementById('p-nome').value = p.Nome || '';
+      document.getElementById('p-custo').value = p.ValorCusto || '';
+      document.getElementById('p-venda').value = p.ValorVenda || '';
+      document.getElementById('p-descricao').value = p.Descricao || '';
+      document.getElementById('produto-form-titulo').innerText = 'Editar apostila / produto';
+      document.getElementById('btn-produto').innerText = 'Salvar edição';
+      document.getElementById('btn-cancelar-edicao-produto').style.display = 'inline-block';
+      document.getElementById('secao-produto').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelarEdicaoProduto() {
+      PRODUTO_EDITANDO_ID = null;
       document.getElementById('p-nome').value = '';
       document.getElementById('p-custo').value = '';
       document.getElementById('p-venda').value = '';
       document.getElementById('p-descricao').value = '';
-      carregarTudo();
+      document.getElementById('produto-form-titulo').innerText = 'Cadastrar apostila / produto';
+      document.getElementById('btn-produto').innerText = 'Salvar produto';
+      document.getElementById('btn-cancelar-edicao-produto').style.display = 'none';
     }
 
     function renderizarProdutos() {
       var el = document.querySelector('#tabela-produtos tbody');
-      if (DADOS.produtos.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="4">Nenhum produto cadastrado ainda.</td></tr>'; return; }
+      if (DADOS.produtos.length === 0) { el.innerHTML = '<tr><td class="vazio" colspan="5">Nenhum produto cadastrado ainda.</td></tr>'; return; }
       el.innerHTML = DADOS.produtos.map(function (p) {
         return '<tr><td><b>' + p.Nome + '</b></td><td style="max-width:320px;white-space:pre-wrap;">' + (p.Descricao || '') + '</td>' +
-          '<td>' + fmtMoeda(p.ValorCusto) + '</td><td>' + fmtMoeda(p.ValorVenda) + '</td></tr>';
+          '<td>' + fmtMoeda(p.ValorCusto) + '</td><td>' + fmtMoeda(p.ValorVenda) + '</td>' +
+          '<td><button class="pequeno" style="background:var(--cinza-claro);" onclick="editarProduto(' + p.ID + ')">Editar</button></td></tr>';
       }).join('');
     }
 
