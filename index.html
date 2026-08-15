@@ -237,7 +237,7 @@
           <div class="grid-form">
             <div class="campo"><label>Forma de pagamento</label>
               <select id="fo-forma-pagamento">
-                <option>Link Cartão</option><option>Cartão de Crédito</option><option>PIX</option><option>Boleto</option>
+                <option>Link Cartão</option><option>Cartão de Crédito</option><option>PIX</option><option>Boleto</option><option>Cheque</option>
               </select>
             </div>
             <div class="campo"><label>Status do recebimento</label>
@@ -271,7 +271,7 @@
             <div class="campo"><label>Contato do cliente (opcional)</label><input id="v-contato" placeholder="Telefone / e-mail"></div>
             <div class="campo"><label>Forma de pagamento</label>
               <select id="v-forma-pagamento">
-                <option>Link Cartão</option><option>Cartão de Crédito</option><option>PIX</option><option>Boleto</option>
+                <option>Link Cartão</option><option>Cartão de Crédito</option><option>PIX</option><option>Boleto</option><option>Cheque</option>
               </select>
             </div>
             <div class="campo"><label>Status do recebimento</label>
@@ -347,8 +347,8 @@
         <div class="painel">
           <h2>Histórico de acertos</h2>
           <div class="tabela-wrap"><table id="tabela-acertos">
-            <thead><tr><th>Data</th><th>Total (R$)</th><th>Qtd vendas</th><th>Observação</th><th>Registrado por</th></tr></thead>
-            <tbody><tr><td class="vazio" colspan="5">Carregando...</td></tr></tbody>
+            <thead><tr><th>Data</th><th>Total (R$)</th><th>Qtd vendas</th><th>Observação</th><th>Registrado por</th><th>Ações</th></tr></thead>
+            <tbody><tr><td class="vazio" colspan="6">Carregando...</td></tr></tbody>
           </table></div>
         </div>
       </section>
@@ -495,7 +495,7 @@
             };
           }),
           acertos: (acertosRes.data || []).map(function (a) {
-            return { Data: a.criado_em, ValorTotal: a.valor_total, QtdVendas: a.qtd_vendas, Observacao: a.observacao, RegistradoPor: a.registrado_por };
+            return { ID: a.id, Data: a.criado_em, ValorTotal: a.valor_total, QtdVendas: a.qtd_vendas, VendasIds: a.vendas_ids, Observacao: a.observacao, RegistradoPor: a.registrado_por };
           }),
           estoquePorProduto: (estoqueProdutoRes.data || []).map(function (e) {
             return { ProdutoID: e.produto_id, ProdutoNome: e.produto_nome, Saldo: e.saldo };
@@ -565,6 +565,35 @@
     function saldoDoProduto(produtoId) {
       var item = DADOS.estoquePorProduto.filter(function (e) { return String(e.ProdutoID) === String(produtoId); })[0];
       return item ? item.Saldo : 0;
+    }
+
+    // ============ IMPRESSÃO DO RELATÓRIO DE ACERTO ============
+    function abrirRelatorioImpressao(titulo, registro, itens, colunaLabel, colunaValorFn) {
+      var linhas = itens.map(function (v) {
+        return '<tr><td>' + fmtData(v.Data) + '</td><td>' + v.Cliente + '</td><td>' + v.ProdutoNome + '</td><td>' + v.Quantidade + '</td><td>' + fmtMoeda(colunaValorFn(v)) + '</td></tr>';
+      }).join('');
+      var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + titulo + '</title>' +
+        '<style>body{font-family:Arial,sans-serif;padding:24px;color:#1f2937;} h1{font-size:18px;margin-bottom:4px;} .sub{color:#6b7280;font-size:13px;margin-bottom:6px;} table{width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;} th,td{padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:left;} th{background:#f3f4f6;} .totais{margin-top:16px;font-size:14px;} .totais b{font-size:16px;}</style>' +
+        '</head><body>' +
+        '<h1>' + titulo + '</h1>' +
+        '<div class="sub">Data: ' + fmtData(registro.Data) + ' &nbsp;|&nbsp; Registrado por: ' + (registro.RegistradoPor || '-') + '</div>' +
+        (registro.Observacao ? '<div class="sub">Observação: ' + registro.Observacao + '</div>' : '') +
+        '<table><thead><tr><th>Data</th><th>Cliente</th><th>Produto</th><th>Qtd</th><th>' + colunaLabel + '</th></tr></thead><tbody>' + linhas + '</tbody></table>' +
+        '<div class="totais">Quantidade de vendas: <b>' + registro.QtdVendas + '</b><br>Valor total: <b>' + fmtMoeda(registro.ValorTotal) + '</b></div>' +
+        '</body></html>';
+      var win = window.open('', '_blank');
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(function () { win.print(); }, 300);
+    }
+
+    function imprimirAcerto(id) {
+      var a = DADOS.acertos.filter(function (x) { return x.ID === id; })[0];
+      if (!a) return;
+      var ids = (a.VendasIds || '').split(',').filter(Boolean).map(Number);
+      var itens = DADOS.vendas.filter(function (v) { return ids.indexOf(v.ID) !== -1; });
+      abrirRelatorioImpressao('Acerto com Ricardo Camara', a, itens, 'Custo total (R$)', function (v) { return v.ValorCustoTotal; });
     }
 
     // ============ DASHBOARD ============
@@ -781,10 +810,9 @@
             '<button class="pequeno" style="background:#dbeafe;color:#1e40af;" onclick="abrirFecharOrcamento(' + o.ID + ')">Fechar → Pedido</button> ' +
             '<button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="cancelarOrcamento(' + o.ID + ')">Cancelar</button>';
         } else if (o.Status === 'Fechado') {
-          acoes = '<span style="color:var(--cinza);font-size:12px;">Pedido #' + o.VendaID + '</span>';
-        } else {
-          acoes = '<span style="color:var(--cinza);font-size:12px;">-</span>';
+          acoes = '<span style="color:var(--cinza);font-size:12px;">Pedido #' + o.VendaID + '</span> ';
         }
+        acoes += '<button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="excluirOrcamento(' + o.ID + ')">Excluir</button>';
         return '<tr><td>' + fmtData(o.Data) + '</td><td>' + o.Cliente + '</td><td>' + o.ProdutoNome + '</td>' +
           '<td>' + o.Quantidade + '</td><td>' + fmtMoeda(o.ValorTotal) + '</td><td>' + badgeOrcamento(o.Status) + '</td>' +
           '<td>' + acoes + '</td></tr>';
@@ -830,6 +858,14 @@
       carregarTudo();
     }
 
+    async function excluirOrcamento(id) {
+      if (!confirm('Excluir definitivamente este orçamento? Essa ação não pode ser desfeita.')) return;
+      const { error } = await sb.rpc('excluir_orcamento', { p_orcamento_id: id });
+      if (error) { tratarErro('msg-orcamento', error); return; }
+      mostrarMsg('msg-orcamento', 'ok', 'Orçamento excluído.');
+      carregarTudo();
+    }
+
     // ============ LISTA DE VENDAS ============
     function badgeRecebimento(status) {
       if (status === 'Recebido') return '<span class="badge verde">Recebido</span>';
@@ -850,6 +886,7 @@
         if (!v.Cancelada) {
           acoes += ' <button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="cancelarVenda(' + v.ID + ')">Cancelar</button>';
         }
+        acoes += ' <button class="pequeno" style="background:#fee2e2;color:#991b1b;" onclick="excluirVenda(' + v.ID + ')">Excluir</button>';
         var linhaEstilo = v.Cancelada ? ' style="opacity:0.55;"' : '';
         return '<tr' + linhaEstilo + '>' +
           '<td>' + v.ID + '</td>' + '<td>' + fmtData(v.Data) + '</td>' + '<td>' + v.Cliente + '</td>' + '<td>' + v.ProdutoNome + '</td>' +
@@ -876,6 +913,14 @@
       const { error } = await sb.rpc('cancelar_venda', { p_venda_id: vendaId, p_usuario: USUARIO_NOME });
       if (error) { tratarErro('msg-vendas', error); return; }
       mostrarMsg('msg-vendas', 'ok', 'Venda cancelada e estoque devolvido.');
+      carregarTudo();
+    }
+
+    async function excluirVenda(vendaId) {
+      if (!confirm('Excluir definitivamente esta venda? Essa ação não pode ser desfeita.')) return;
+      const { error } = await sb.rpc('excluir_venda', { p_venda_id: vendaId });
+      if (error) { tratarErro('msg-vendas', error); return; }
+      mostrarMsg('msg-vendas', 'ok', 'Venda excluída.');
       carregarTudo();
     }
 
@@ -984,11 +1029,12 @@
 
       var elA = document.querySelector('#tabela-acertos tbody');
       if (DADOS.acertos.length === 0) {
-        elA.innerHTML = '<tr><td class="vazio" colspan="5">Nenhum acerto registrado ainda.</td></tr>';
+        elA.innerHTML = '<tr><td class="vazio" colspan="6">Nenhum acerto registrado ainda.</td></tr>';
       } else {
         elA.innerHTML = DADOS.acertos.map(function (a) {
           return '<tr><td>' + fmtData(a.Data) + '</td><td>' + fmtMoeda(a.ValorTotal) + '</td><td>' + a.QtdVendas + '</td>' +
-            '<td>' + (a.Observacao || '') + '</td><td>' + (a.RegistradoPor || '') + '</td></tr>';
+            '<td>' + (a.Observacao || '') + '</td><td>' + (a.RegistradoPor || '') + '</td>' +
+            '<td><button class="pequeno" style="background:var(--cinza-claro);" onclick="imprimirAcerto(' + a.ID + ')">Imprimir</button></td></tr>';
         }).join('');
       }
     }
